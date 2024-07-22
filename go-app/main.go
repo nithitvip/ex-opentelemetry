@@ -2,15 +2,19 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 
+	"github.com/XSAM/otelsql"
 	"github.com/gin-gonic/gin"
+	_ "github.com/lib/pq"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
@@ -34,11 +38,29 @@ func main() {
 	defer func() { _ = tp.Shutdown(ctx) }()
 
 	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+
+	db, err := otelsql.Open("postgres", "host=localhost user=test password=example dbname=test application_name=GoDemoApp sslmode=disable", otelsql.WithAttributes(
+		semconv.DBSystemPostgreSQL,
+	))
+
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
 
 	r := gin.Default()
 	r.GET("/ping", traceMiddleware(), func(c *gin.Context) {
+		value, err := queryValue(c.Request.Context(), db)
+		if err != nil {
+			fmt.Println(err)
+			c.JSON(500, gin.H{
+				"message": err.Error(),
+			})
+			return
+		}
 		c.JSON(200, gin.H{
-			"message": "pong",
+			"message": value,
 		})
 	})
 	err = r.Run()
@@ -50,10 +72,16 @@ func main() {
 func traceMiddleware() gin.HandlerFunc {
 	tracer := otel.GetTracerProvider().Tracer(ScopeName)
 	return func(c *gin.Context) {
-		ctx2, span := tracer.Start(c.Request.Context(), c.FullPath())
+		requestCtx := c.Request.Context()
+		defer func() {
+			c.Request = c.Request.WithContext(requestCtx)
+		}()
+		fmt.Println(c.Request.Header)
+		ctx := otel.GetTextMapPropagator().Extract(requestCtx, propagation.HeaderCarrier(c.Request.Header))
+		ctx, span := tracer.Start(ctx, c.FullPath())
 		defer span.End()
 
-		c.Request = c.Request.WithContext(ctx2)
+		c.Request = c.Request.WithContext(ctx)
 
 		c.Next()
 
@@ -76,7 +104,7 @@ func serverStatus(code int) (codes.Code, string) {
 	if code >= 500 {
 		return codes.Error, ""
 	}
-	return codes.Unset, ""
+	return codes.Ok, ""
 }
 
 func newExporter(ctx context.Context) (sdktrace.SpanExporter, error) {
@@ -107,5 +135,18 @@ func newTraceProvider(exp sdktrace.SpanExporter) *sdktrace.TracerProvider {
 	return sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exp),
 		sdktrace.WithResource(r),
+		//sdktrace.WithSampler(
+		//	sdktrace.ParentBased(sdktrace.TraceIDRatioBased(0.1)),
+		//),
 	)
+}
+
+func queryValue(ctx context.Context, db *sql.DB) (string, error) {
+	var test string
+	var dummy interface{}
+	err := db.QueryRowContext(ctx, `select test, pg_sleep(1) from example;`).Scan(&test, &dummy)
+	if err != nil {
+		return "", err
+	}
+	return test, nil
 }
