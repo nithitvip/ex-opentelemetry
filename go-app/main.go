@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
+	"go.opentelemetry.io/otel/exporters/zipkin"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -25,8 +26,9 @@ const ScopeName = "go-demo"
 func main() {
 	ctx := context.Background()
 
-	//exp, err := newExporter(ctx)
-	exp, err := newHttpExporter(ctx)
+	exp, err := newExporter(ctx)
+	//exp, err := newHttpExporter(ctx)
+	//exp, err := newZipkinExporter(ctx)
 	if err != nil {
 		log.Fatalf("failed to initialize exporter: %v", err)
 	}
@@ -116,6 +118,10 @@ func newHttpExporter(ctx context.Context) (sdktrace.SpanExporter, error) {
 	// Your preferred exporter: console, jaeger, zipkin, OTLP, etc.
 	endpoint := otlptracehttp.WithEndpoint("localhost:4318")
 	return otlptracehttp.New(ctx, otlptracehttp.WithInsecure(), endpoint)
+}
+
+func newZipkinExporter(ctx context.Context) (sdktrace.SpanExporter, error) {
+	return zipkin.New("http://localhost:9411/api/v2/spans")
 }
 
 func newTraceProvider(exp sdktrace.SpanExporter) *sdktrace.TracerProvider {

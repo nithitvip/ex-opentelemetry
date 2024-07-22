@@ -1,0 +1,20 @@
+services:
+  # zipkin:
+  #   image: openzipkin/zipkin
+  #   ports:
+  #     - 9411:9411
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - 16686:16686
+      - 4317:4317
+      - 4318:4318
+  db:
+    image: postgres:15.4-alpine
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: example
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - 5432:5432
